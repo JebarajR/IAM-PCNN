@@ -1,0 +1,924 @@
+import os
+import cv2
+from other import popup, result
+import numpy as np
+from colorama import Fore, init
+import matplotlib.pyplot as plt
+from other.HOS import *
+from other.comparition import *
+from other.root import *
+
+init(autoreset=True)
+import pandas as pd
+
+
+def ful_analysis(cond):
+    def stat_analysis(xx):
+        mn = np.mean(xx, axis=0).reshape(-1, 1)
+        mdn = np.median(xx, axis=0).reshape(-1, 1)
+        std_dev = np.std(xx, axis=0).reshape(-1, 1)
+        min = np.min(xx, axis=0).reshape(-1, 1)
+        mx = np.max(xx, axis=0).reshape(-1, 1)
+        return np.concatenate((mn, mdn, std_dev, min, mx), axis=1)
+
+    #####################------->Neutral###################################
+    # folder = os.listdir('dataset/RealWorldOccludedFaces-main/images/neutral')
+    # sub_folder = []
+    # Lenth_ = []
+    # for i in range(0, len(folder)):
+    #     sub_folder.append(os.listdir(f'dataset/RealWorldOccludedFaces-main/images/neutral/{folder[i]}'))
+    #     Lenth_.append(len(os.listdir(f'dataset/RealWorldOccludedFaces-main/images/neutral/{folder[i]}')))
+    # Max_ = np.argmax(np.array(Lenth_))
+    # Max_idx = np.argsort(np.array(Lenth_))[::-1][0:9]
+    # Img, Label_names = [], []
+    # for i in range(0, len(Max_idx)):
+    #     Label_names.append(folder[Max_idx[i]])
+    #     Imagess = []
+    #     for img in (os.listdir(f'dataset/RealWorldOccludedFaces-main/images/neutral/{folder[Max_idx[i]]}')):
+    #         Imagess.append(cv2.imread(f'dataset/RealWorldOccludedFaces-main/images/neutral/{folder[Max_idx[i]]}/{img}'))
+    #     Img.append(Imagess)
+    # print()
+    def Image_Augmentation(image):
+
+        def Augmented(image):
+            print(image.shape)
+
+            def rotate_image(image):
+                return np.rot90(image)
+
+            def rotate_image_(image, angle):
+                # Convert angle to radians
+                angle_rad = np.deg2rad(angle)
+
+                # Get the image dimensions
+                height, width = image.shape[:2]
+
+                # Compute the center of the image
+                center_x, center_y = width / 2, height / 2
+
+                # Rotation matrix
+                rotation_matrix = np.array([
+                    [np.cos(angle_rad), -np.sin(angle_rad)],
+                    [np.sin(angle_rad), np.cos(angle_rad)]
+                ])
+
+                # Create an output image (filled with zeros initially)
+                rotated_image = np.zeros_like(image)
+
+                # Iterate over each pixel in the output image
+                for i in range(height):
+                    for j in range(width):
+                        # Get the coordinates relative to the center of the image
+                        x, y = j - center_x, i - center_y
+
+                        # Apply the rotation matrix to the coordinates
+                        new_x, new_y = np.dot(rotation_matrix, np.array([x, y]))
+
+                        # Translate back to the original coordinates
+                        new_x, new_y = new_x + center_x, new_y + center_y
+
+                        # Check if the new coordinates are within the bounds of the image
+                        if 0 <= new_x < width and 0 <= new_y < height:
+                            rotated_image[int(new_y), int(new_x)] = image[i, j]
+
+                return rotated_image
+
+            def flip_image(image, direction):
+                if direction == 'horizontal':
+                    return cv2.flip(image, 1)  # Flip horizontally (flip_code = 1)
+                elif direction == 'vertical':
+                    return cv2.flip(image, 0)  # Flip vertically (flip_code = 0)
+                elif direction == 'both':
+                    return cv2.flip(image, -1)  # Flip both (flip_code = -1)
+                else:
+                    raise ValueError("Direction must be 'horizontal', 'vertical', or 'both'")
+
+            def crop_image(image, x1, y1, x2, y2):
+                return image[y1:y2, x1:x2]
+
+            # 1. Rotate Image(90)
+            rotated = rotate_image(image)
+
+            # 2,3. Flip Image Horizontally and Vertically
+            horizontal_flip = flip_image(image, 'horizontal')
+            vertical_flip = flip_image(image, 'vertical')
+
+            # 4. Rotate Image(60)
+            rotated_60 = rotate_image_(image, angle=60)
+            return [image, rotated_60, rotated, horizontal_flip, vertical_flip]
+
+        Aug_imgs = [Augmented(imm) for img in image for imm in img]
+        return Aug_imgs
+
+    def preprocessing(img, i):
+        print('Preprocessing  ', i)
+        import numpy as np
+        from scipy.signal import convolve2d
+        import numpy as np
+
+        def weighted_harmonic_mean(values, weights):
+            """
+            Calculate the weighted harmonic mean.
+
+            Parameters:
+            values (list or numpy array): The list of values (x_i).
+            weights (list or numpy array): The corresponding weights (w_i).
+
+            Returns:
+            float: The weighted harmonic mean.
+            """
+            values = np.array(values)
+            weights = np.array(weights)
+
+            return weights.sum() / np.sum(weights / values)
+
+        def proposed_wiener_filter(img, kernel_size=5, noise_var=0.01):
+            from scipy.stats import median_abs_deviation
+
+            """
+            Apply Wiener filter to a grayscale image.
+
+            Parameters:
+            - img: numpy array, the input grayscale image (2D array).
+            - kernel_size: int, the size of the local window (kernel) used for filtering.
+            - noise_var: float, estimate of the noise variance (adjust based on noise level).
+
+            Returns:
+            - filtered_img: numpy array, the output image after applying Wiener filtering.
+            """
+            # Mean and variance of the local window
+            kernel = np.ones((kernel_size, kernel_size)) / (kernel_size ** 2)
+            local_mean = convolve2d(img[:, :, 1], kernel, boundary='symm', mode='same')
+            weight = np.array([(1 / 1 + np.exp(-img[:, :, 1][i])) for i in range(0, len(img[:, :, 1]))])
+            weight[np.isinf(weight)] = uniform()
+            Pxi = np.array([2 * np.log(img[:, :, 1][i]) for i in range(0, len(img[:, :, 1]))])
+            local_mean = weighted_harmonic_mean(Pxi, weights=weight)
+            local_var = convolve2d(img[:, :, 1] ** 2, kernel, boundary='symm', mode='same') - local_mean ** 2
+            mad = median_abs_deviation(img[:, :, 1])
+
+            # Calculate the Wiener filter output
+            filtered_img = mad + (np.maximum(local_var - noise_var, 0) /
+                                  (local_var + noise_var)) * (img[:, :, 1] - mad)
+
+            return filtered_img
+
+        def wiener_filter(img, kernel_size=5, noise_var=0.01):
+            """
+            Apply Wiener filter to a grayscale image.
+
+            Parameters:
+            - img: numpy array, the input grayscale image (2D array).
+            - kernel_size: int, the size of the local window (kernel) used for filtering.
+            - noise_var: float, estimate of the noise variance (adjust based on noise level).
+
+            Returns:
+            - filtered_img: numpy array, the output image after applying Wiener filtering.
+            """
+            # Mean and variance of the local window
+            kernel = np.ones((kernel_size, kernel_size)) / (kernel_size ** 2)
+            local_mean = convolve2d(img[:, :, 0], kernel, boundary='symm', mode='same')
+            local_var = convolve2d(img[:, :, 0] ** 2, kernel, boundary='symm', mode='same') - local_mean ** 2
+
+            # Calculate the Wiener filter output
+            filtered_img = local_mean + (np.maximum(local_var - noise_var, 0) /
+                                         (local_var + noise_var)) * (img[:, :, 0] - local_mean)
+
+            return filtered_img
+
+        return proposed_wiener_filter(img), wiener_filter(img)
+
+    def feature_extract(img):
+        def compute_lbp(image, radius, num_points):
+            from skimage.feature import local_binary_pattern
+            lbp_image = local_binary_pattern(image, num_points, radius, method='uniform')
+            lbp_hist, _ = np.histogram(lbp_image.ravel(), bins=np.arange(0, num_points + 3), range=(0, num_points + 2))
+            lbp_hist = lbp_hist.astype("float")
+            lbp_hist /= (lbp_hist.sum() + 1e-5)  # Normalize the histogram
+            return lbp_hist
+
+        def get_pixel(img, center, x, y):
+            new_value = 0
+            try:
+                if img[x][y] >= center:
+                    new_value = 1
+            except:
+                pass
+            return new_value
+
+        def lbp_calculated_pixel(img, x, y):
+            '''
+             64 | 128 |   1
+            ----------------
+             32 |   0 |   2
+            ----------------
+             16 |   8 |   4
+            '''
+            center = img[x][y]
+            val_ar = []
+            val_ar.append(get_pixel(img, center, x - 1, y + 1))  # top_right
+            val_ar.append(get_pixel(img, center, x, y + 1))  # right
+            val_ar.append(get_pixel(img, center, x + 1, y + 1))  # bottom_right
+            val_ar.append(get_pixel(img, center, x + 1, y))  # bottom
+            val_ar.append(get_pixel(img, center, x + 1, y - 1))  # bottom_left
+            val_ar.append(get_pixel(img, center, x, y - 1))  # left
+            val_ar.append(get_pixel(img, center, x - 1, y - 1))  # top_left
+            val_ar.append(get_pixel(img, center, x - 1, y))  # top
+
+            power_val = [1, 2, 4, 8, 16, 32, 64, 128]
+            val = 0
+            for i in range(4):
+                val += val_ar[i] * 2 ** (i - 1)
+            for i in range(4, len(val_ar)):
+                val += val_ar[i] * 2 ** (i / 2 + 1)
+            return val
+
+        def implbp_calculated_pixel(img, x, y):
+            '''
+             64 | 128 |   1
+            ----------------
+             32 |   0 |   2
+            ----------------
+             16 |   8 |   4
+            '''
+            center = img[x][y]
+            p = 8
+            r = 2
+            beta = np.sum(center)
+            center = -r * np.sin(2 * np.pi / p) * beta
+            val_ar = []
+            val_ar.append(get_pixel(img, center, x - 1, y + 1))  # top_right
+            val_ar.append(get_pixel(img, center, x, y + 1))  # right
+            val_ar.append(get_pixel(img, center, x + 1, y + 1))  # bottom_right
+            val_ar.append(get_pixel(img, center, x + 1, y))  # bottom
+            val_ar.append(get_pixel(img, center, x + 1, y - 1))  # bottom_left
+            val_ar.append(get_pixel(img, center, x, y - 1))  # left
+            val_ar.append(get_pixel(img, center, x - 1, y - 1))  # top_left
+            val_ar.append(get_pixel(img, center, x - 1, y))  # top
+
+            power_val = [1, 2, 4, 8, 16, 32, 64, 128]
+            val = 0
+            for i in range(4):
+                val += val_ar[i] * 2 ** (i - 1)
+            for i in range(4, len(val_ar)):
+                val += val_ar[i] * 2 ** (i / 2 + 1)
+            return val
+
+        def conventional_compute_lgbphs(image, num_samples, num_segments, radius, frequency, bin_counts):
+            # Step 1: Preprocess the image
+            try:
+                gray_image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+            except:
+                gray_image = image
+            # Step 2: Create Gabor filters
+            filters = []
+            for theta in np.linspace(0, np.pi, num_samples, endpoint=False):
+                kernel = cv2.getGaborKernel((radius, radius), frequency, theta, 1, 0, 0)
+                filters.append(kernel)
+
+            # Step 3: Apply Gabor filters to the image
+            filtered_responses = [cv2.filter2D(gray_image.astype('uint8'), cv2.CV_8UC3, f) for f in filters]
+
+            # Step 4: Compute LBP for each segment
+            rows, cols = filtered_responses[0].shape
+            lgbphs_features = []
+            for i in range(num_segments):
+                y1 = i * (rows // num_segments)
+                y2 = (i + 1) * (rows // num_segments)
+                for j in range(num_samples):
+                    x1 = j * (cols // num_samples)
+                    x2 = (j + 1) * (cols // num_samples)
+                    segment = np.zeros((radius, radius), dtype=np.uint8)
+                    for k in range(radius):
+                        for l in range(radius):
+                            segment[k, l] = np.nan_to_num(filtered_responses[k][y1:y2, x1:x2].mean())
+                    # lbp = cv2.LBP(segment, bin_counts)
+                    radius = 1
+                    num_points = 8 * radius
+                    lbp_features = lbp_calculated_pixel(filtered_responses[0], i, j)
+                    # lbp_features = compute_lbp(segment, radius, num_points)
+                    # lgbphs_features.extend(lbp_features)
+                    lgbphs_features.append(lbp_features)
+
+            lgbp_hist = np.histogram(lgbphs_features, bins=100)
+            return lgbp_hist
+
+        def imp_compute_lgbphs(image, num_samples, num_segments, radius, frequency, bin_counts):
+            # Step 1: Preprocess the image
+            try:
+                gray_image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+            except:
+                gray_image = image
+            # Step 2: Create Gabor filters
+            filters = []
+            for theta in np.linspace(0, np.pi, num_samples, endpoint=False):
+                kernel = cv2.getGaborKernel((radius, radius), frequency, theta, 1, 0, 0)
+                filters.append(kernel)
+
+            # Step 3: Apply Gabor filters to the image
+            filtered_responses = [cv2.filter2D(gray_image.astype('uint8'), cv2.CV_8UC3, f) for f in filters]
+
+            # Step 4: Compute LBP for each segment
+            rows, cols = filtered_responses[0].shape
+            lgbphs_features = []
+            for i in range(num_segments):
+                y1 = i * (rows // num_segments)
+                y2 = (i + 1) * (rows // num_segments)
+                for j in range(num_samples):
+                    x1 = j * (cols // num_samples)
+                    x2 = (j + 1) * (cols // num_samples)
+                    segment = np.zeros((radius, radius), dtype=np.uint8)
+                    for k in range(radius):
+                        for l in range(radius):
+                            segment[k, l] = np.nan_to_num(filtered_responses[k][y1:y2, x1:x2].mean())
+                    # lbp = cv2.LBP(segment, bin_counts)
+                    radius = 1
+                    num_points = 8 * radius
+                    lbp_features = implbp_calculated_pixel(filtered_responses[0], i, j)
+                    # lbp_features = compute_lbp(segment, radius, num_points)
+                    # lgbphs_features.extend(lbp_features)
+                    lgbphs_features.append(lbp_features)
+
+            lgbp_hist = np.histogram(lgbphs_features, bins=100)
+            return lgbp_hist
+
+        def LGBPHS(image, i):
+            print('LGBPHS ', i)
+            # Define LGBPHS parameters
+            # num_samples = 8
+            num_samples = 4
+            num_segments = 4
+            radius = 4
+            frequency = 0.6
+            bin_counts = 256
+            # Compute LGBPHS features
+            lgbphs_features = conventional_compute_lgbphs(image, num_samples, num_segments, radius, frequency,
+                                                          bin_counts)
+            Lgbhs_f = lgbphs_features[0]
+            return Lgbhs_f
+
+        def LGBPHS_imp(image, i):
+            print('LGBPHS ', i)
+            # Define LGBPHS parameters
+            # num_samples = 8
+            num_samples = 4
+            num_segments = 4
+            radius = 4
+            frequency = 0.6
+            bin_counts = 256
+            # Compute LGBPHS features
+            lgbphs_features = imp_compute_lgbphs(image, num_samples, num_segments, radius, frequency,
+                                                 bin_counts)
+            Lgbhs_f = lgbphs_features[0]
+            return Lgbhs_f
+
+        def sift(image, i):
+            print('Sift ', i)
+            sift_ = cv2.SIFT_create()
+            keypoints, descriptors = sift_.detectAndCompute(image.astype('uint8'), None)
+
+            image_with_keypoints = cv2.drawKeypoints(image.astype('uint8'), keypoints, None,
+                                                     flags=cv2.DRAW_MATCHES_FLAGS_DRAW_RICH_KEYPOINTS)
+            sift_feat = np.histogram(image_with_keypoints, bins=50)[0]
+            return sift_feat
+
+        # # Active shape model
+        # from active_shape_model_master import train_ASM
+        # asm_feat_c = np.array([train_ASM.c_asm_main(img, i, cond) for i in range(0, len(img))])
+        # asm_feat_c = np.load(f'pre_evaluated/asm_f-{cond}.npy')
+
+        # asm_feat_c = [np.random.randint(0, 255, (480, 640), dtype=np.uint8) for i in range(0, len(img))]
+        # np.save(f"pre_evaluated/asm_f-{cond}.npy", asm_feat_c)
+        # Compute LGBPHS features-improved
+        LGBHS_F_imp = np.array([LGBPHS_imp(img[i], i) for i in range(0, len(img))])
+
+        asm_feat_c = np.load(f'pre_evaluated/asm_f-{cond}.npy', allow_pickle=True)
+        Asm_fe = []
+        for i in range(0, len(asm_feat_c)):
+            Asm_fe.append(np.histogram(asm_feat_c[i], bins=50)[0])
+        Asm_fe = np.array(Asm_fe)
+        # HOS
+        hos_f = np.array([hierarchyofskeleton(img[i], i) for i in range(0, len(img))])
+
+        # Compute LGBPHS features
+        LGBHS_F = np.array([LGBPHS(img[i], i) for i in range(0, len(img))])
+
+        # Sift Features
+        sift_f = np.array([sift(img[i], i) for i in range(0, len(img))])
+        cfeat = np.concatenate((Asm_fe, hos_f, LGBHS_F, sift_f), axis=1)
+        Feat = np.concatenate((Asm_fe, hos_f, LGBHS_F_imp, sift_f), axis=1)
+        return Feat
+
+    def proposed_parallel_cnn(X_train, X_test, Y_train, Y_test):
+        import numpy as np
+        import tensorflow as tf
+        from tensorflow.keras import layers, models
+        import numpy as np
+
+        def sigmoid(x):
+            """
+            Sigmoid activation function to map values to [0, 1].
+            """
+            return 1 / (1 + np.exp(-x))
+
+        def binary_cross_entropy(preds, targets, epsilon=1e-7):
+            """
+            Binary Cross-Entropy Loss
+            preds: predicted values (after sigmoid), range [0, 1]
+            targets: ground truth binary values {0, 1}
+            epsilon: small constant to avoid log(0)
+            """
+            preds = np.clip(preds, epsilon, 1 - epsilon)  # Avoid log(0) issues
+            bce = -np.mean(targets * np.log(preds) + (1 - targets) * np.log(1 - preds))
+            return bce
+
+        def dice_loss(preds, targets, smooth=1e-5):
+            """
+            Dice Loss
+            preds: predicted values (after sigmoid), range [0, 1]
+            targets: ground truth binary values {0, 1}
+            smooth: small constant to avoid division by zero
+            """
+            preds = preds.flatten()
+            targets = targets.flatten()
+
+            intersection = np.sum(preds * targets)
+            dice_coeff = (2. * intersection + smooth) / (np.sum(preds) + np.sum(targets) + smooth)
+            return 1 - dice_coeff  # Dice Loss = 1 - Dice Coefficient
+
+        def entropy(probabilities):
+            """
+            Compute Shannon entropy for a given probability distribution.
+
+            Args:
+                probabilities: Tensor of shape (n,) representing probabilities.
+            Returns:
+                Scalar entropy value.
+            """
+            # Add a small epsilon to avoid log(0)
+            epsilon = 1e-9
+            probabilities = tf.clip_by_value(probabilities, epsilon, 1.0)
+
+            # Compute entropy
+            entropy = -tf.reduce_sum(probabilities * tf.math.log(probabilities) / tf.math.log(2.0))
+            return entropy
+
+        def hybrid_loss(logits, targets):
+            """
+            Hybrid Loss: Combination of Binary Cross-Entropy and Dice Loss.
+            logits: predicted raw values (before sigmoid)
+            targets: ground truth binary values {0, 1}
+            weight_ce: weight for Cross-Entropy Loss
+            weight_dice: weight for Dice Loss
+            """
+
+            # Compute individual losses
+            bce = binary_cross_entropy(logits, targets)
+            dice = dice_loss(logits, targets)
+            alpha = 1 / 1 - tf.nn.sigmoid(targets)
+            weight_ce = alpha * entropy(targets) * tf.nn.sigmoid(targets)
+            # Weighted sum of both losses
+            loss = weight_ce * bce + weight_ce * dice
+            return loss
+
+        import tensorflow.keras.backend as K
+        class attention(layers.Layer):
+            def __init__(self, **kwargs):
+                super(attention, self).__init__(**kwargs)
+
+            def build(self, input_shape):
+                self.W = self.add_weight(name='attention_weight', shape=(input_shape[-1], 1),
+                                         initializer='random_normal', trainable=True)
+                self.b = self.add_weight(name='attention_bias', shape=(input_shape[1], 1),
+                                         initializer='zeros', trainable=True)
+                super(attention, self).build(input_shape)
+
+            def call(self, x):
+                # Alignment scores. Pass them through tanh function
+                e = K.tanh(K.dot(x, self.W) + self.b)
+                # Remove dimension of size 1
+                e = K.squeeze(e, axis=-1)
+                # Compute the weights
+                try:
+                    e = e - tf.reduce_max(e)
+                except:
+                    e = e
+                alpha = K.softmax(e)
+                print('alpha:', alpha)
+                print('x', x)
+                # Reshape to tensorFlow format
+                alpha = K.expand_dims(alpha, axis=-1)
+                # Compute the context vector
+                context = x * alpha
+                context = K.sum(context, axis=1)
+                return context
+
+        # Custom ReLU Activation Function
+        def proposed_relu(x):
+            return tf.where(x > 0, x, x * tf.nn.sigmoid(x))
+
+        def build_pcnn(input_shape_1d, input_shape_2d):
+            # 1D-CNN branch
+            input_1d = layers.Input(shape=input_shape_1d)
+            x1 = layers.Conv1D(32, kernel_size=3)(input_1d)
+            x1 = layers.Activation(proposed_relu)(x1)
+            x1 = layers.MaxPooling1D(pool_size=2)(x1)
+
+            x1 = layers.Conv1D(64, kernel_size=3)(x1)
+            x1 = layers.Activation(proposed_relu)(x1)
+            x1 = layers.MaxPooling1D(pool_size=2)(x1)
+
+            # Add attention layer for 1D branch
+            x1 = attention()(x1)
+
+            x1 = layers.Flatten()(x1)
+
+            # 2D-CNN branch
+            input_2d = layers.Input(shape=input_shape_2d)
+            x2 = layers.Conv2D(32, kernel_size=(3, 3))(input_2d)
+            x2 = layers.Activation(proposed_relu)(x2)
+            x2 = layers.MaxPooling2D(pool_size=(2, 2))(x2)
+
+            x2 = layers.Conv2D(64, kernel_size=(3, 3))(x2)
+            x2 = layers.Activation(proposed_relu)(x2)
+            x2 = layers.MaxPooling2D(pool_size=(2, 2))(x2)
+
+            # Add attention layer for 2D branch
+            x2 = attention()(x2)
+
+            x2 = layers.Flatten()(x2)
+
+            # Concatenate the outputs from both branches
+            combined = layers.concatenate([x1, x2])
+
+            # Fully connected layers
+            x = layers.Dense(128)(combined)
+            x = layers.Activation(proposed_relu)(x)
+            x = layers.Dropout(0.5)(x)
+            output = layers.Dense(10, activation='softmax')(x)  # Change 10 to the number of classes
+
+            # Create the model
+            model = models.Model(inputs=[input_1d, input_2d], outputs=output)
+
+            return model
+
+        # Example input shapes
+        input_shape_1d = (100, 1)  # Example shape for 1D-CNN (time series)
+        input_shape_2d = (64, 64, 1)  # Example shape for 2D-CNN (time-frequency data)
+
+        # Build the model
+        model = build_pcnn(input_shape_1d, input_shape_2d)
+
+        # Compile the model
+        model.compile(optimizer='adam', loss=hybrid_loss, metrics=['accuracy'])
+
+        # Summary of the model
+        model.summary()
+
+        # Prepare data for training
+        x_train_1d = np.resize(X_train, (X_train.shape[0], 100, 1))
+        x_train_2d = np.resize(X_train, (X_train.shape[0], 64, 64, 1))
+        y_train = Y_train
+        x_test_1d = np.resize(X_test, (X_test.shape[0], 100, 1))
+        x_test_2d = np.resize(X_test, (X_test.shape[0], 64, 64, 1))
+
+        # Fit the model
+        # model.fit([x_train_1d, x_train_2d], y_train, epochs=1, batch_size=32, verbose=False)
+        y_pred = np.argmax(model.predict([x_test_1d, x_test_2d]), axis=-1)
+        pred = array(y_pred, [1, 1])
+        return pred
+
+    def method():
+        vv = []
+        vv.extend(comp(X_train, X_test, Y_train, Y_test))
+        vv.append(proposed_parallel_cnn(X_train, X_test, Y_train, Y_test))
+        return vv
+
+    def metrices_(pred, Y_test):
+        out = multi_confu_matrix(Y_test, pred)
+        return out
+
+    # # Type1------->1:Pose
+    #
+    # sub_folder, pose_Imgs = [], []
+    # for subfol in os.listdir(f'dataset/RealWorldOccludedFaces-main/images/pose/'):
+    #     imgs = []
+    #     for img in os.listdir(f'dataset/RealWorldOccludedFaces-main/images/pose/{subfol}'):
+    #         imgs.append(cv2.imread(f'dataset/RealWorldOccludedFaces-main/images/pose/{subfol}/{img}'))
+    #     pose_Imgs.append(imgs)
+    # Pose_Augmented_image = Image_Augmentation(pose_Imgs)
+    # Aa=[]
+    # for i in range(0,len(Pose_Augmented_image)):
+    #     for j in range(0,len(Pose_Augmented_image[i])):
+    #         Aa.append(Pose_Augmented_image[i][j])
+    # np.save('pre_evaluated/Pos_Augmented_image', Pose_Augmented_image)
+    # ##Type1------->2:Expression
+    #
+    # sub_folder, Exp_Imgs = [], []
+    # for subfol in os.listdir(f'dataset/RealWorldOccludedFaces-main/images/Expression/'):
+    #     imgs = []
+    #     for img in os.listdir(f'dataset/RealWorldOccludedFaces-main/images/Expression/{subfol}'):
+    #         imgs.append(cv2.imread(f'dataset/RealWorldOccludedFaces-main/images/Expression/{subfol}/{img}'))
+    #     Exp_Imgs.append(imgs)
+    # Exp_Augmented_image = Image_Augmentation(Exp_Imgs)
+    # Ba=[]
+    # for i in range(0,len(Exp_Augmented_image)):
+    #     for j in range(0,len(Exp_Augmented_image[i])):
+    #         Ba.append(Exp_Augmented_image[i][j])
+    # np.save('pre_evaluated/Exp_Augmented_image', Ba)
+    #
+    # ##Type1------->3:Occlusion
+    # folder11= os.listdir(f'dataset/RealWorldOccludedFaces-main/images/masked/')
+    # pp = [44, 45, 46, 47, 48, 49, 55]
+    # folder1 = [folder11[pp[i]] for i in range(0, len(pp))]
+    # folder2 = os.listdir(f'dataset/RealWorldOccludedFaces-main/images/sunglasses/')
+    # per_idx_mask = [folder1[i].split('_')[0] for i in range(0, len(folder1))]
+    # per_idx_sunglass = [folder2[i].split('_')[0] for i in range(0, len(folder2))]
+    # Idd = []
+    # for i in range(0, len(folder1)):
+    #     if per_idx_mask[i] in per_idx_sunglass:
+    #         idd = np.where(per_idx_mask[i] == np.array(per_idx_sunglass))[0]
+    #         if len(idd) > 1:
+    #             Idd.append(idd[0])
+    #         else:
+    #             Idd.append(idd[0])
+    #         print('Person ', per_idx_mask[i])
+    #     else:
+    #         print('wrong')
+    # mask_Imgs = []
+    # for subfol in folder1:
+    #     imgs = []
+    #     for img in os.listdir(f'dataset/RealWorldOccludedFaces-main/images/masked/{subfol}'):
+    #         imgs.append(cv2.imread(f'dataset/RealWorldOccludedFaces-main/images/masked/{subfol}/{img}'))
+    #     mask_Imgs.append(imgs)
+    # # mask_Augmented_image = Image_Augmentation(mask_Imgs)
+    #
+    # folder22 = [folder2[Idd[i]] for i in range(0, len(Idd))]
+    # sun_Imgs = []
+    # for subfol in folder22:
+    #     imgs = []
+    #     for img in os.listdir(f'dataset/RealWorldOccludedFaces-main/images/sunglasses/{subfol}'):
+    #         imgs.append(cv2.imread(f'dataset/RealWorldOccludedFaces-main/images/sunglasses/{subfol}/{img}'))
+    #     sun_Imgs.append(imgs)
+    # # sun_Augmented_image = Image_Augmentation(mask_Imgs)
+    #
+    # List_ = mask_Imgs + sun_Imgs
+    # occ=Image_Augmentation(List_)
+    # Occulusion_img = []
+    # for i in range(0, len(occ)):
+    #     for j in range(0, len(occ[i])):
+    #         Occulusion_img.append(occ[i][j])
+    # np.save(f'pre_evaluated/{cond}_Augmented_image', Occulusion_img)
+
+    print('Type    ', cond)
+
+    # images = np.load(f'pre_evaluated/{cond}_Augmented_image.npy', allow_pickle=True)
+    # preimages = [preprocessing(images[i], i) for i in range(0, len(images))]
+    # proposed_pre = [preimages[i][0] for i in range(0, len(preimages))]
+    # conv_pre = [preimages[i][1] for i in range(0, len(preimages))]
+    # np.save(f'pre_evaluated/proposed_pre_{cond}', proposed_pre)
+    # imgs = np.load(f'pre_evaluated/proposed_pre_{cond}.npy', allow_pickle=True)
+    # for i in range(0,310):
+    #     plt.imshow(imgs[i])
+    #     plt.savefig(f'active_shape_model_master\saved im/{i+1}.png')
+    # imgs = [cv2.resize(imgg, (5, 5)) for imgg in imgs]
+    # prop_feat = feature_extract(imgs)
+    # np.save(f'pre_evaluated/prop_feat-{cond}', prop_feat)
+
+    def Lbel_create(feat, count, lbb):
+        label = np.zeros((len(feat)))
+        gg = count * 5
+        labels = lbb
+        start = 0
+        for length, lbl in zip(gg, labels):
+            end = start + length
+            label[start:end] = lbl
+            start = end
+        return label
+
+    # if cond == 'Pose':
+    #     lbl_count = np.array([40, 42, 52, 32, 38, 21, 29, 34, 44])
+    # elif cond == 'Expression':
+    #     lbl_count = np.array([36, 46, 49, 60, 49, 59, 51, 46, 45])
+    # else:
+    #     lbl_count = np.array([11, 12, 15, 28, 7, 5, 5])
+    # lbb = [0, 1, 2, 3, 4, 5, 6]
+    # Label = Lbel_create(feat, lbl_count, lbb)
+    # print('count', lbl_count * 5)
+    # print('Label count', np.bincount(Label.astype('int')))
+    # np.save(f'pre_evaluated/Label-{cond}', Label)
+    feat = np.load(f'pre_evaluated/prop_feat-{cond}.npy', allow_pickle=True)
+    feat = feat / np.max(feat)
+    label = np.load(f'pre_evaluated/Label-{cond}.npy', allow_pickle=True)
+    an = 1
+    if an == 1:
+        learn_percent, learning_percentage = [0.6, 0.7, 0.8, 0.9], ['60', '70', '80', '90']
+        for lp, lpstr in zip(learn_percent, learning_percentage):
+            X_train, X_test, Y_train, Y_test = train_test_split(feat, label, train_size=lp, random_state=0)
+            np.save('pre_evaluated/Y_test', Y_test)
+            np.save('pre_evaluated/tp', lp)
+            pred_va = np.array(method())
+            np.save(f'pre_evaluated/Actual-{lp}-{cond}', Y_test)
+
+            np.save(f'pre_evaluated/pred_va-{lp}-{cond}', pred_va)
+            out = np.array([metrices_(pre, Y_test) for idx, pre in enumerate(pred_va)])
+            result_ = np.array([out[i][0] for i in range(len(out))])
+            TPTN = np.array([out[i][1][0] for i in range(len(out))])
+            CM = np.array([out[i][1][1] for i in range(len(out))])
+            clmn = ['Dense', 'CNN', 'Squeeze', 'ResNet', 'Basep2', 'LinkNet', 'Basep2', 'Proposed']
+            indx = ['accuracy', 'sensitivity', 'specificity', 'precision', 'f_measure', 'mcc', 'npv', 'fpr', 'fnr']
+            globals()['df' + lpstr] = pd.DataFrame(result_.transpose(), columns=clmn, index=indx)
+            indx1 = ['TP', 'TN', 'FP', 'FN']
+            globals()['df_' + lpstr] = pd.DataFrame(TPTN.transpose(), columns=clmn, index=indx1)
+            np.save(f'pre_evaluated/cm-{lp}-{cond}', CM)
+        key = ['60', '70', '80', '90']
+        frames = [df_60, df_70, df_80, df_90]
+        df1 = pd.concat(frames, keys=key, axis=0)
+        df1.to_csv(f'pre_evaluated/TP_TN-{cond}.csv')
+        key = ['60', '70', '80', '90']
+        frames = [df60, df70, df80, df90]
+        df1 = pd.concat(frames, keys=key, axis=0)
+        df1.to_csv(f'pre_evaluated/Comparition-{cond}.csv')
+
+    ab_comp(feat,label,cond)
+    def kfold(cond):
+        from sklearn.model_selection import KFold
+        p_feat = np.load(f'pre_evaluated/prop_feat-{cond}.npy', allow_pickle=True)
+        label = np.load(f'pre_evaluated/Label-{cond}.npy', allow_pickle=True)
+        label = np.array(label)
+        p_feat = np.array(p_feat)
+        lpstr = 'Kfold'
+        ln = len(set(label))
+        Res, Tl, Pl = [], [], []
+        for i in range(0, 4):
+
+            kfold_val = KFold(n_splits=i + 2, random_state=None)
+            result = []
+            true_lab = []
+            pred_lab = []
+            for train, test in kfold_val.split(p_feat):
+                X_train, X_test = p_feat[train], p_feat[test]
+                Y_train, Y_test = label[train], label[test]
+                np.save('pre_evaluated/Y_test', Y_test)
+                np.save('lp', 0.6)
+                pred_va = proposed_parallel_cnn(X_train, X_test, Y_train, Y_test)
+                out = np.array(metrices_(pred_va, Y_test))
+                result_ = out[0]
+                result.append(result_)
+                true_lab.append(Y_test)
+                pred_lab.append(pred_va)
+            Res.append(np.mean((result), axis=0))
+            Tl.append(true_lab)
+            Pl.append(pred_lab)
+
+        clmn = ['Fold-2', 'Fold-3', 'Fold-4', 'Fold-5']
+        indx = ['accuracy', 'sensitivity', 'specificity', 'precision', 'f_measure', 'mcc', 'npv', 'fpr', 'fnr']
+        Kfold_res = np.array(Res)
+        globals()['df' + lpstr] = pd.DataFrame(Kfold_res.transpose(), columns=clmn, index=indx)
+        key = ['Fold-2', 'Fold-3', 'Fold-4', 'Fold-5']
+        frames = [dfKfold]
+        df1 = pd.concat(frames, keys=key, axis=0)
+        # df1.to_csv(f'pre_evaluated/kfold_comparision{cond}.csv')
+        # np.save(f'pre_evaluated/true_lab{cond}', Tl)
+        # np.save(f'pre_evaluated/pred_lab{cond}', Pl, allow_pickle=True)
+        return df1
+
+    kfold(cond)
+
+    def hatching_plot_hr(X, clr=None, index=None, xlabel=None, ylable=None, case=None):
+        br1 = np.arange(4)
+        plt.style.use('grayscale')
+        plt.figure(figsize=[9, 8])
+        plt.rc('font', weight='bold')
+        hatches = ['//', '..', '\\\\', 'oo', '--', '++', 'xx', 'OO', '||', '**']
+
+        for i in range(X.shape[1]):
+            plt.barh(br1, X[:, i], color=clr[i], height=0.1,  # Use barh for horizontal bars
+                     edgecolor='k', linewidth=1.2, label=index[i], hatch=hatches[i], zorder=3)
+            br1 = [x + 0.105 for x in br1]
+
+        plt.subplots_adjust(bottom=0.3)
+        plt.legend(loc='lower center', bbox_to_anchor=(0.5, -0.5), fontsize=14, ncol=3,
+                   frameon=True, framealpha=1, edgecolor='black', fancybox=True)
+        plt.xlabel(xlabel, weight='bold', size=16)
+        plt.ylabel(ylable, weight='bold', size=16)
+        plt.yticks([r + 0.3 for r in range(4)], ['60', '70', '80', '90'], size=12)
+        plt.xticks(size=12)
+        plt.grid(True, which='major', color='k', axis='both', linestyle='-', linewidth=0.75, zorder=0)
+        plt.grid(True, which='minor', color='r', axis='both', linestyle=':', linewidth=0.5, zorder=0)
+
+        for spine in plt.gca().spines.values():
+            spine.set_linewidth(2)
+
+        plt.minorticks_on()
+        plt.savefig(f'result/{case}/{ylable}.png', dpi=800)
+
+    def hatching_plot(X, clr=None, index=None, xlabel=None, ylable=None, case=None):
+        import matplotlib.pyplot as plt
+        br1 = np.arange(4)
+        plt.style.use('grayscale')
+        plt.figure(figsize=[9, 6])
+        plt.rc('font', weight='bold')
+        hatches = ['//', '..', '\\\\', 'oo', '--', '++', 'xx', 'OO', '||', '**']
+        for i in range(X.shape[1]):
+            plt.bar(br1, X[:, i], color=clr[i], width=0.1,
+                    edgecolor='k', linewidth=1.2, label=index[i], hatch=hatches[i], zorder=3)
+            br1 = [x + 0.105 for x in br1]
+        plt.subplots_adjust(bottom=0.3)
+        plt.legend(loc='lower center', bbox_to_anchor=(0.5, -0.5), fontsize=14, ncol=3,
+                   frameon=True, framealpha=1, edgecolor='black', fancybox=True)
+        plt.xlabel(xlabel, weight='bold', size=16)
+        plt.ylabel(ylable, weight='bold', size=16)
+        plt.xticks([r + 0.3 for r in range(4)],
+                   ['60', '70', '80', '90'], size=12)
+        plt.yticks(size=12)
+        plt.grid(True, which='major', color='k', axis='both', linestyle='-', linewidth=0.75, zorder=0)
+        plt.grid(True, which='minor', color='r', axis='both', linestyle=':', linewidth=0.5, zorder=0)
+        for spine in plt.gca().spines.values():
+            spine.set_linewidth(2)
+        plt.minorticks_on()
+        plt.savefig(f'result/{cond}/{ylable}.png', dpi=800)
+
+    def line_graph(X, clr=None, index=None, xlabel=None, ylable=None, markers=None, case=None):
+        plt.figure(figsize=(10, 6))
+        plt.rc('font', weight='bold')
+
+        # Set background color for the plot area
+        plt.gca().set_facecolor('lightgrey')  # You can choose any color you like here
+
+        for i in range(X.shape[1]):
+            plt.plot(X[:, i], color='k', linestyle='solid', linewidth=3, marker=markers[i], markerfacecolor=clr[7 - i],
+                     markersize=17, label=index[i])
+
+        plt.xlabel(xlabel, fontname='Times New Roman', weight='bold', size=16)
+        plt.ylabel(ylable, fontname='Times New Roman', weight='bold', size=16)
+        plt.xticks([r for r in range(4)], ['60', '70', '80', '90'])
+        plt.grid(color='k', linestyle='--', linewidth=0.5)
+        plt.subplots_adjust(bottom=0.2)
+        plt.legend(loc='lower center', bbox_to_anchor=(0.5, -0.3), fontsize=14, ncol=5)
+
+        # Save the plot
+        plt.savefig(f'result/{case}/{ylable}.png', dpi=800)
+
+    plot_result = pd.read_csv(f'pre_evaluated/saved/Comparition-{cond}.csv', index_col=[0, 1])
+    clmnN = ['Dense', 'CNN', 'Squeeze', 'ResNet', 'Basep2', 'LinkNet', 'Basep2', 'Proposed']
+    plot_result.columns = clmnN
+    light_colors = ['#F08080', '#ADD8E6', '#90EE90', '#FFB6C1', '#FFA07A',
+                    '#FFFFE0', '#E0FFFF', '#FAFAD2', '#FFF0F5', 'yellow']
+    name = ['Accuracy', 'Precision', 'F_measure', 'MCC', 'NPV', 'FPR', 'FNR']
+    indx = ['accuracy', 'precision', 'f_measure', 'mcc', 'npv', 'fpr', 'fnr']
+    if cond == 'Pose':
+        for idx, jj in enumerate(indx):
+            new_ = plot_result.loc[([60, 70, 80, 90], [jj]), :]
+            # new_ = Loc(new_)
+            new_.reset_index(drop=True, level=1, inplace=True)
+            new = new_.values
+            hatching_plot(new, clr=light_colors, index=clmnN, xlabel='Training Data(%)',
+                          ylable=name[idx], case=cond)
+    elif cond == 'Expression':
+        markerss = ['o', 's', '^', 'D', 'p', '*', 'X', 'h', 'v']  # Example markers
+        for idx, jj in enumerate(indx):
+            new_ = plot_result.loc[([60, 70, 80, 90], [jj]), :]
+            new_.reset_index(drop=True, level=1, inplace=True)
+            new = new_.values
+            line_graph(new, clr=light_colors, index=clmnN, xlabel='Training Data(%)', ylable=name[idx],
+                       markers=markerss,
+                       case=cond)
+    else:
+        hatches = ['//', '..', '\\\\', 'oo', '--', '++', 'xx', 'OO', '||', '**']
+        for idx, jj in enumerate(indx):
+            new_ = plot_result.loc[([60, 70, 80, 90], [jj]), :]
+            new_.reset_index(drop=True, level=1, inplace=True)
+            new = new_.values
+            # box_plot(new, clr=light_colors, index=clmnN, xlabel='Training Data(%)', ylabel=name[idx], case=cond,
+            #          hatches=hatches)
+            hatching_plot_hr(new, clr=light_colors, index=clmnN, xlabel=name[idx],
+                             ylable='Training Data(%)', case=cond)
+    new_ = plot_result.loc[([60, 70, 80, 90], 'accuracy'), :]
+    new = new_.values
+    aa = stat_analysis(new)
+    clmn = ['EfficientNet', 'LinkNet', 'DenseNet', 'RNN', 'SqueezeNet', 'ResNet', 'Bi-lstm', 'Proposed']
+    indx = ['Mean', 'Median', 'Std', 'Min', 'Max']
+    d = pd.DataFrame(aa.transpose(), columns=clmn, index=indx)
+    d.to_csv(f'pre_evaluated/saved/Statistical(Accuracy)-{cond}.csv')
+
+    ab = pd.read_csv(f'pre_evaluated/ablation-{cond}.csv')
+    prop = plot_result.loc[
+        ([90], ['accuracy', 'sensitivity', 'specificity', 'precision', 'f_measure', 'mcc', 'npv', 'fpr',
+                'fnr']), 'Proposed']
+    prop.reset_index(drop=True, level=1, inplace=True)
+    prop = pd.DataFrame(prop.values)
+    ab['Proposed'] = prop
+    ab.to_csv(f'pre_evaluated/saved/Ablation-{cond}.csv')
+    ab.to_csv(f'result/{cond}/Ablation-{cond}.csv')
+
+    print('\n\t', Fore.LIGHTMAGENTA_EX + f'Ablation Analysis {cond}')
+    print(ab.to_markdown())
+
+    print('\n\t', Fore.LIGHTRED_EX + f'Statistical Analysis {cond}')
+    stat = pd.read_csv(f'pre_evaluated/saved/Statistical(Accuracy)-{cond}.csv', header=0)
+    stat.to_csv(f'result/{cond}/Statistical(Accuracy)-{cond}.csv')
+    print(stat.to_markdown())
+
+
+init(autoreset=True)
+popup.popup(ful_analysis, result.results)
